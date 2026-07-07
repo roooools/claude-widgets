@@ -1,4 +1,4 @@
-/* storyboard-chat runtime v1.2.0 — 絵コンテチャット（タム運用）
+/* storyboard-chat runtime v1.2.1 — 絵コンテチャット（タム運用）
    使い方: <script src="...jsdelivr.../storyboard-chat.js"></script> の後に
    StoryboardChat.render({cases: CASES, base: BASE}) を呼ぶ。
    ページ側に <div id="tabs"></div><div id="panel"></div> が必要。
@@ -28,7 +28,16 @@ var CSS = [
 '.a-kind{font-size:11px;color:var(--text-muted);margin-left:6px}',
 '.a-name{font-weight:500;margin:3px 0 2px}',
 '.a-name[contenteditable]:focus,.a-path[contenteditable]:focus{background:var(--bg-accent);outline:none;border-radius:2px}',
-'.a-path{font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);word-break:break-all;outline:none;border-radius:2px}',
+'.a-path{font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);word-break:break-all;outline:none;border-radius:2px;flex:1;min-width:0}',
+'.a-thumb-wrap{display:flex;flex-direction:column;gap:3px;align-items:center;flex-shrink:0}',
+'.a-cap{font-size:9px;color:var(--text-muted);line-height:1;text-align:center;letter-spacing:.02em}',
+'.a-path-label{display:flex;align-items:center;gap:4px;margin:5px 0 1px}',
+'.a-path-badge{display:inline-flex;align-items:center;gap:3px;font-size:9.5px;color:var(--text-muted);background:var(--surface-2,var(--bg-accent));border-radius:3px;padding:1px 5px;letter-spacing:.02em}',
+'.a-path-row{display:flex;align-items:flex-start;gap:4px}',
+'.a-note{font-size:10px;line-height:1.3;margin-top:2px;display:flex;align-items:center;gap:3px}',
+'.a-note.warn{color:var(--text-danger)}',
+'.a-note.ok{color:var(--text-muted)}',
+'.a-card.unset .a-thumb{border-color:var(--border)}',
 '.a-del{position:absolute;top:6px;right:6px;opacity:0;cursor:pointer;color:var(--text-muted);background:none;border:none;font-size:14px;padding:2px}',
 '.a-card:hover .a-del{opacity:1}',
 '.a-del:hover{color:var(--text-danger)}',
@@ -93,6 +102,15 @@ var statsTimer=null;
 function getCase(){ return CASES.find(function(c){ return c.id === activeTab; }); }
 function gradeOf(n){ return GRADES.find(function(g){ return String(g.n) === String(n); }); }
 
+// パスが「未設定」＝下流に渡らない状態か判定。空・BASEのみ・テンプレのYYMMDDプレースホルダはすべて未設定扱い。
+function pathUnset(a){
+  var p = (a.path || '').trim();
+  if(!p) return true;
+  if(p === BASE || p === BASE.replace(/\/$/, '')) return true;
+  if(/YYMMDD/.test(p)) return true;
+  return false;
+}
+
 function countChars(cs){
   var tmp = document.createElement('div');
   var n = 0;
@@ -125,11 +143,24 @@ function importImage(file, obj, done){
   r.readAsDataURL(file);
 }
 
+// アセットのサムネに画像を入れる。プレビュー(pic)を設定しつつ、
+// パスが未設定なら「BASE+ファイル名」を自動補完＝ドロップが実際に下流参照を生む（タムの運用: Higgsfield画像を案件フォルダ=BASEに置く）。
+// 既にパスが入っている場合は絶対に上書きしない。
+function importAssetImage(file, a){
+  var wasUnset = pathUnset(a);
+  importImage(file, a, function(){
+    if(wasUnset && file && file.name) a.path = BASE + file.name;
+    renderPanel();
+  });
+}
+
 function buildScriptText(cs){
   var tmp = document.createElement('div');
   var g = gradeOf(cs.color);
   var out = '【絵コンテチャット確定】' + cs.rank + ' ' + cs.label + '（' + cs.cuts.length + 'カット）\n';
-  out += '■アセット:\n' + cs.assets.map(function(a){ return a.tag + '（' + a.name + '／' + a.kind + '）= ' + a.path; }).join('\n') + '\n';
+  out += '■アセット（= のパスが生成の参照。下流はこのパスを直接消費する）:\n' + cs.assets.map(function(a){
+    return a.tag + '（' + a.name + '／' + a.kind + '）= ' + (pathUnset(a) ? '【パス未設定・要確認】' : a.path);
+  }).join('\n') + '\n';
   out += '■ベースカラー: ' + (g ? g.n + ' ' + g.name + ' — ' + g.en : '未選択') + '\n';
   var lines = cs.cuts.map(function(c, i){
     tmp.innerHTML = c.audioHtml || '';
@@ -171,14 +202,20 @@ function renderPanel(){
   html += '<div class="stat"><div class="stat-label">無言カット</div><div class="stat-val" id="st-silent">' + cs.cuts.filter(function(c){return c.silent;}).length + '</div></div>';
   html += '<div class="stat"><div class="stat-label">P4判定</div><div class="stat-val pass">PASS</div></div>';
   html += '</div>';
-  html += '<p class="sec-h">アセット棚（タグ・名前・パスは編集可／サムネはクリックかD&Dで挿入）</p>';
+  html += '<p class="sec-h">アセット棚 — <strong style="color:var(--text-secondary);font-weight:500">パスが生成に渡る本体</strong>。サムネは確認用プレビューで、画像自体はチャットに送られません（送られるのはパス＝@タグの一覧）</p>';
   html += '<div class="assets" id="assets">';
   cs.assets.forEach(function(a, i){
-    html += '<div class="a-card" data-ai="' + i + '">';
-    html += '<div class="a-thumb' + (a.pic ? ' has-img' : '') + '" data-aimg="' + i + '" title="クリックで画像を選択 / D&D可">' + (a.pic ? '' : '<i class="ti ti-photo" style="font-size:18px" aria-hidden="true"></i>') + '</div>';
+    var unset = pathUnset(a);
+    html += '<div class="a-card' + (unset ? ' unset' : '') + '" data-ai="' + i + '">';
+    html += '<div class="a-thumb-wrap"><div class="a-thumb' + (a.pic ? ' has-img' : '') + '" data-aimg="' + i + '" title="クリックで画像を選択 / D&D可（プレビュー＋パス自動補完）">' + (a.pic ? '' : '<i class="ti ti-photo" style="font-size:18px" aria-hidden="true"></i>') + '</div><div class="a-cap">プレビュー</div></div>';
     html += '<div class="a-body"><span class="tag-chip" contenteditable="true" data-af="tag">' + a.tag + '</span><span class="a-kind">' + a.kind + '</span>';
     html += '<div class="a-name" contenteditable="true" data-af="name">' + a.name + '</div>';
-    html += '<div class="a-path" contenteditable="true" data-af="path">' + a.path + '</div></div>';
+    html += '<div class="a-path-label"><span class="a-path-badge"><i class="ti ti-arrow-down-right" style="font-size:11px" aria-hidden="true"></i>生成に渡すパス</span></div>';
+    html += '<div class="a-path-row"><div class="a-path" contenteditable="true" data-af="path">' + a.path + '</div></div>';
+    html += unset
+      ? '<div class="a-note warn"><i class="ti ti-alert-triangle" style="font-size:12px" aria-hidden="true"></i>パス未設定：この状態では下流に渡りません（画像をドロップするか実パスを入力）</div>'
+      : '<div class="a-note ok"><i class="ti ti-check" style="font-size:12px" aria-hidden="true"></i>このパスが生成に渡ります</div>';
+    html += '</div>';
     html += '<button class="a-del" data-adel="' + i + '" title="このアセットを削除"><i class="ti ti-x" aria-hidden="true"></i></button>';
     html += '</div>';
   });
@@ -284,6 +321,24 @@ function wire(){
     if(a) a[f.dataset.af] = f.textContent;
   });
 
+  // パス編集が終わったら未設定/設定済みの表示だけ更新（入力中は再描画しない＝フォーカス維持）
+  assetsEl.addEventListener('focusout', function(e){
+    var f = e.target.closest('[data-af="path"]');
+    if(!f) return;
+    var card = f.closest('.a-card');
+    var a = cs.assets[+card.dataset.ai];
+    if(!a) return;
+    var unset = pathUnset(a);
+    var note = card.querySelector('.a-note');
+    card.classList.toggle('unset', unset);
+    if(note){
+      note.className = 'a-note ' + (unset ? 'warn' : 'ok');
+      note.innerHTML = unset
+        ? '<i class="ti ti-alert-triangle" style="font-size:12px" aria-hidden="true"></i>パス未設定：この状態では下流に渡りません（画像をドロップするか実パスを入力）'
+        : '<i class="ti ti-check" style="font-size:12px" aria-hidden="true"></i>このパスが生成に渡ります';
+    }
+  });
+
   assetsEl.addEventListener('click', function(e){
     var del = e.target.closest('.a-del');
     if(del){ cs.assets.splice(+del.dataset.adel, 1); renderPanel(); return; }
@@ -294,7 +349,7 @@ function wire(){
       inp.type = 'file'; inp.accept = 'image/*';
       inp.onchange = function(ev){
         var f = ev.target.files[0]; if(!f) return;
-        importImage(f, cs.assets[i], renderPanel);
+        importAssetImage(f, cs.assets[i]);
       };
       inp.click();
     }
@@ -306,7 +361,7 @@ function wire(){
     if(!th || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
     e.preventDefault();
     var f = e.dataTransfer.files[0];
-    if(f && f.type.indexOf('image/') === 0) importImage(f, cs.assets[+th.dataset.aimg], renderPanel);
+    if(f && f.type.indexOf('image/') === 0) importAssetImage(f, cs.assets[+th.dataset.aimg]);
   });
 
   document.getElementById('a-add-btn').onclick = function(){
@@ -408,13 +463,14 @@ function wire(){
   var sendOrig = sendBtn.innerHTML;
   sendBtn.onclick = function(){
     var text = buildScriptText(cs);
+    var unsetN = cs.assets.filter(pathUnset).length;
     var sent = false;
     try{
       if(typeof sendPrompt === 'function'){ sendPrompt(text); sent = true; }
       else if(window.sendPrompt){ window.sendPrompt(text); sent = true; }
     }catch(err){ sent = false; }
     if(sent){
-      sendBtn.textContent = '送信しました';
+      sendBtn.textContent = unsetN ? ('送信しました（パス未設定' + unsetN + '件に注意）') : '送信しました';
     } else {
       var copied = false;
       try{
