@@ -1,4 +1,5 @@
-/* seedance-editor.js v1.4.0 — Seedance日本語フィールド編集→英語清書エディタ（CDNランタイム）
+/* seedance-editor.js v1.4.1 — Seedance日本語フィールド編集→英語清書エディタ（CDNランタイム）
+   v1.4.1: ビートに任意の`label`（例:"C4"）を追加。Genタブ・ビートカード見出し・Gen内の内容サマリー行に反映——「Gen2って何のカット?」を無くす。
    v1.4.0: カメラムーブ辞書（7カテゴリ35種・大カテゴリ→ムーブの2段選択→カメラ欄に挿入）。旧6チップは「演出コンボ」カテゴリへ統合。
    v1.3.1: FOVドロップダウンにmm併記（47°→「47° (40–50mm)」）。
    使い方（チャット側はこれだけ流す）:
@@ -82,7 +83,19 @@
       { label: "車載マウント", fov: "", cam: "車体マウント固定、路面の振動がそのまま伝わる" }
     ]}
   ];
-  var BEAT_FIELDS = ["t", "cut", "shot", "fov", "cam", "block", "action", "fg", "bg", "perf", "line", "delivery", "props", "lock"];
+  var BEAT_FIELDS = ["label", "t", "cut", "shot", "fov", "cam", "block", "action", "fg", "bg", "perf", "line", "delivery", "props", "lock"];
+  function trunc(s, n) { s = s || ""; return s.length > n ? s.slice(0, n) + "…" : s; }
+  function genCutsSummary(g) {
+    var labels = g.beats.map(function (b) { return b.label; }).filter(Boolean);
+    return labels.length ? labels.join("→") : "";
+  }
+  function genSynopsis(g) {
+    return g.beats.map(function (b, i) {
+      var tag = b.label || ("#" + (i + 1));
+      var gist = b.line ? "「" + trunc(b.line, 14) + "」" : trunc(b.action, 16);
+      return tag + (gist ? "：" + gist : "");
+    }).join("　→　");
+  }
   var COMMON_FIELDS = ["refs", "look", "light", "wb", "color", "audio"];
   var active = 0;
 
@@ -115,6 +128,7 @@
     var h = '<div style="' + CARD + '">';
     h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">';
     h += '<span style="font-weight:500">ビート' + (bi + 1) + '</span>';
+    h += '<input id="' + p + 'label" value="' + esc(b.label) + '" placeholder="カット番号(C4等)" style="width:100px;font-size:12px;color:var(--text-accent)">';
     h += '<input id="' + p + 't" value="' + esc(b.t) + '" placeholder="0.0-2.5s" style="width:110px">';
     h += '<input id="' + p + 'cut" value="' + esc(b.cut) + '" placeholder="カット種別（例：2.5s ハードカット）" style="flex:1;min-width:170px">';
     h += '<button data-del="' + gi + ':' + bi + '" style="' + CHIP + '" aria-label="ビート削除"><i class="ti ti-trash" aria-hidden="true" style="font-size:14px"></i></button>';
@@ -145,10 +159,13 @@
     var h = "";
     if (model.title) h += '<div style="font-weight:500;font-size:15px;margin:0 0 10px">' + esc(model.title) + ' <span style="color:var(--text-muted);font-size:12px">' + esc(model.model) + '</span></div>';
     if (model.gens.length > 1) {
-      h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">' + model.gens.map(function (g, i) {
+      h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">' + model.gens.map(function (g, i) {
         var on = i === active;
-        return '<button data-gen="' + i + '" style="' + BTN + ';padding:6px 14px;font-size:13px' + (on ? ';border:2px solid var(--border-accent);color:var(--text-accent)' : '') + '">' + esc(g.title || ("Gen " + (i + 1))) + '</button>';
+        var cuts = genCutsSummary(g);
+        var txt = esc(g.title || ("Gen " + (i + 1))) + (cuts ? '<br><span style="font-size:11px;opacity:.75">' + esc(cuts) + '</span>' : '');
+        return '<button data-gen="' + i + '" style="' + BTN + ';padding:6px 14px;font-size:13px;line-height:1.5' + (on ? ';border:2px solid var(--border-accent);color:var(--text-accent)' : '') + '">' + txt + '</button>';
       }).join('') + '</div>';
+      h += '<div style="font-size:12px;color:var(--text-muted);margin:0 0 12px">' + esc(genSynopsis(model.gens[active])) + '</div>';
     }
     h += '<div style="' + CARD + '">';
     h += '<div style="font-weight:500;margin-bottom:12px"><i class="ti ti-users" aria-hidden="true" style="font-size:16px;vertical-align:-2px;margin-right:6px"></i>共通設定（全Gen共有）</div>';
@@ -178,7 +195,7 @@
     var g = model.gens[gi];
     var s = "\n[" + (g.title || "Generation " + (gi + 1)) + "]\n";
     g.beats.forEach(function (b, bi) {
-      s += "\n[ビート" + (bi + 1) + "｜" + (b.t || "") + "] " + (b.cut || "") + "\n";
+      s += "\n[ビート" + (bi + 1) + (b.label ? "｜" + b.label : "") + "｜" + (b.t || "") + "] " + (b.cut || "") + "\n";
       s += "ショット: " + (b.shot || "") + " ／ FOV: " + (b.fov || "") + "\n";
       s += "カメラ: " + (b.cam || "") + "\n";
       s += "配置: " + (b.block || "") + "\n";
