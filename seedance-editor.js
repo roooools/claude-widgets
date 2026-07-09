@@ -1,4 +1,5 @@
-/* seedance-editor.js v1.3.1 — Seedance日本語フィールド編集→英語清書エディタ（CDNランタイム）
+/* seedance-editor.js v1.4.0 — Seedance日本語フィールド編集→英語清書エディタ（CDNランタイム）
+   v1.4.0: カメラムーブ辞書（7カテゴリ35種・大カテゴリ→ムーブの2段選択→カメラ欄に挿入）。旧6チップは「演出コンボ」カテゴリへ統合。
    v1.3.1: FOVドロップダウンにmm併記（47°→「47° (40–50mm)」）。
    使い方（チャット側はこれだけ流す）:
      <div id="sd-root">…読み込み中…</div>
@@ -29,13 +30,57 @@
     }).join('') + '</select>';
   }
   var WB = ["3200K", "4000K", "5000K", "5600K", "8500K"];
-  var PRESETS = [
-    { label: "ヒーロー煽り", fov: "47°", cam: "机の高さからローアングル煽り、腰→胸へゆるプッシュイン（1cm微手持ち・リビール動機）" },
-    { label: "前ボケ観察", fov: "47°", cam: "固定・前景の遮蔽物にピント→被写体へラックフォーカス（1cm微手持ち）" },
-    { label: "ダッチ15°", fov: "", cam: "15°傾き（左下がり）の不穏フレーム、軽い収束ラック（1cm微手持ち）" },
-    { label: "沈黙固定", fov: "47°", cam: "固定ロックオフ・目線高・動きなし（1cm微手持ちのみ）＝間を置く" },
-    { label: "ドキュ手持ち", fov: "", cam: "肩担ぎ手持ち・オペレーターの呼吸と1〜2cmの微振動・小さな体重移動リフレーム" },
-    { label: "望遠圧縮", fov: "8°", cam: "遠距離の定点アンカー・1〜2cm微振動・被写体に近づかず自分の視点内でリフレームのみ" }
+  /* カメラムーブ辞書（7カテゴリ）。文言は案件非依存の汎用カメラ言語のみ——シーン固有の名詞（机・窓等）は入れない */
+  var CAMS = [
+    { cat: "演出コンボ（Pro級）", moves: [
+      { label: "ヒーローロー煽り", fov: "47°", cam: "ローポジションから煽り、ウエスト→チェストへゆるプッシュイン（1cm微手持ち・リビール動機）" },
+      { label: "前ボケ観察→ラック", fov: "47°", cam: "固定、前景の遮蔽物にピント→被写体へラックフォーカス（1cm微手持ち）" },
+      { label: "ダッチ15°", fov: "", cam: "15°傾き（左下がり）の不穏フレーム、軽い収束ラック（1cm微手持ち）" },
+      { label: "隠しカメラ観視", fov: "12°", cam: "遠距離の定点から超望遠で観視、前景の遮蔽物がフレーム20〜30%を占有、視点は動かさない" },
+      { label: "スポーツ中継", fov: "8°", cam: "超望遠の定点アンカー、常時1〜2cm微振動、被写体に近づかず自分の視点内でリフレームのみ" },
+      { label: "親密ワイド", fov: "63°", cam: "広角のまま顔に近接、顔センター、背景はボカさず読める深度" }
+    ]},
+    { cat: "固定・寄り引き", moves: [
+      { label: "ロックオフ（沈黙の間）", fov: "", cam: "固定ロックオフ・目線高・動きなし（1cm微手持ちのみ）＝間を置く" },
+      { label: "ゆっくりプッシュイン", fov: "", cam: "ゆっくりプッシュイン——ウエスト→チェストへ、気づき/決意を動機に寄る" },
+      { label: "極ゆる微プッシュ", fov: "", cam: "極ゆっくりの微プッシュイン、ほぼ気づかない速度で緊張を上げる" },
+      { label: "ゆっくりプルバック", fov: "", cam: "ゆっくり引き（プルバック）——孤立や全景のリビールを動機に離れる" },
+      { label: "ラックフォーカス", fov: "", cam: "カメラ固定のまま、前景→奥（または逆）へ明確なラックフォーカス" }
+    ]},
+    { cat: "パン・チルト", moves: [
+      { label: "パン 左→右", fov: "", cam: "三脚パン、左→右へ一定のゆっくり速度（順行・進展の方向）" },
+      { label: "パン 右→左", fov: "", cam: "三脚パン、右→左へ一定のゆっくり速度（逆行・喪失/抵抗の方向）" },
+      { label: "ウィップパン", fov: "", cam: "WHIP PAN：0.3s A静止→0.8sモーションブラー転換→1.4s B静止（0.8s未満はブラーが出ずただのカットになる）" },
+      { label: "チルトアップ", fov: "", cam: "下から上へチルトアップ——足元→顔/全体像のスケールリビール" },
+      { label: "チルトダウン", fov: "", cam: "上から下へチルトダウン——状況→対象への着地/発見" }
+    ]},
+    { cat: "ドリー・トラッキング", moves: [
+      { label: "横トラッキング並走", fov: "", cam: "被写体と並走する横トラッキング、一定距離・一定速度" },
+      { label: "フォロー（背後追従）", fov: "", cam: "背後からフォロー、カメラが半拍遅れてついていく" },
+      { label: "リード（前方後退）", fov: "", cam: "被写体の前方を後退しながらリード、表情を見せ続ける" },
+      { label: "90°アーク", fov: "", cam: "被写体を軸に90°アーク移動、背景がゆっくり回る" },
+      { label: "360°オービット", fov: "", cam: "被写体中心に360°オービット1周、一定速度" }
+    ]},
+    { cat: "手持ち（手ブレ）", moves: [
+      { label: "微手持ち1cm", fov: "", cam: "設置感のある微手持ち——1cmの生命感、オペレーターの呼吸" },
+      { label: "ドキュメンタリー肩担ぎ", fov: "", cam: "肩担ぎドキュメンタリー——呼吸と1〜2cm微振動、小さな体重移動リフレーム" },
+      { label: "緊迫の荒い手持ち", fov: "", cam: "荒い手持ち2〜4cm——緊迫・混乱、被写体を追い直すリフレーム" },
+      { label: "スナップズーム", fov: "", cam: "手持ちスナップズーム（素早いズームイン）——強調・ドキュメンタリー/コメディの文法" }
+    ]},
+    { cat: "クレーン・ドローン", moves: [
+      { label: "クレーンアップ", fov: "", cam: "地上レベルから立ち上がるクレーンショット、人物→全景へ" },
+      { label: "クレーンダウン", fov: "", cam: "高所から降りてくるクレーン、全景→人物へ収束" },
+      { label: "ドローン真俯瞰", fov: "", cam: "真俯瞰ドローン（トップダウン）、ゆっくり上昇または前進" },
+      { label: "ドローン低空前進", fov: "", cam: "ドローンが低空を前進、地形や障害物を縫って被写体へ近づく" },
+      { label: "FPVアクロバット", fov: "", cam: "FPVドローン——急旋回・ダイブ・すり抜けのジェットコースター移動" }
+    ]},
+    { cat: "特殊・POV", moves: [
+      { label: "圧縮ズーム（安全版ドリーズーム）", fov: "", cam: "圧縮ズーム＝カメラ後退＋同時ズームイン、被写体サイズ一定・背景だけ圧縮されていく（めまい表現の安全版）" },
+      { label: "バレットタイム", fov: "", cam: "被写体スローのまま、カメラが弧を描いて回り込むバレットタイム" },
+      { label: "ロール回転", fov: "", cam: "レンズがゆっくりロール回転し水平が傾いていく——眩暈・混乱" },
+      { label: "一人称POV", fov: "", cam: "一人称POV、視線と一致した手持ちの自然な揺れ" },
+      { label: "車載マウント", fov: "", cam: "車体マウント固定、路面の振動がそのまま伝わる" }
+    ]}
   ];
   var BEAT_FIELDS = ["t", "cut", "shot", "fov", "cam", "block", "action", "fg", "bg", "perf", "line", "delivery", "props", "lock"];
   var COMMON_FIELDS = ["refs", "look", "light", "wb", "color", "audio"];
@@ -76,9 +121,14 @@
     h += '</div>';
     h += g2(field("ショットサイズ", inp(p + "shot", b.shot)), field("レンズ（FOV=mm相当）", fovSel(p + "fov", b.fov || "47°")));
     h += field("カメラの動き", inp(p + "cam", b.cam));
-    h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 10px">' + PRESETS.map(function (pr, i) {
-      return '<button data-preset="' + gi + ':' + bi + ':' + i + '" style="' + CHIP + '">' + pr.label + '</button>';
-    }).join('') + '</div>';
+    h += '<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:10px;margin:-4px 0 10px">';
+    h += '<select id="' + p + 'mcat" data-mcat="' + gi + ':' + bi + '" style="width:100%;font-size:13px">' + CAMS.map(function (c, ci) {
+      return '<option value="' + ci + '">' + c.cat + '</option>';
+    }).join('') + '</select>';
+    h += '<select id="' + p + 'mmove" data-mmove="' + gi + ':' + bi + '" style="width:100%;font-size:13px"><option value="">── ムーブを選んで上の欄に挿入 ──</option>' + CAMS[0].moves.map(function (m, mi) {
+      return '<option value="' + mi + '">' + m.label + '</option>';
+    }).join('') + '</select>';
+    h += '</div>';
     h += field("配置", inp(p + "block", b.block));
     h += field("動作", ta(p + "action", b.action));
     h += g2(field("前景", inp(p + "fg", b.fg)), field("背景", inp(p + "bg", b.bg)));
@@ -167,12 +217,26 @@
         render();
       });
     });
-    root.querySelectorAll("[data-preset]").forEach(function (el) {
-      el.addEventListener("click", function () {
-        var a = el.getAttribute("data-preset").split(":");
-        var pr = PRESETS[+a[2]], p = "g" + a[0] + "_b" + a[1] + "_";
-        var cam = document.getElementById(p + "cam"); if (cam) cam.value = pr.cam;
-        if (pr.fov) { var f = document.getElementById(p + "fov"); if (f) f.value = fovLabel(pr.fov); }
+    root.querySelectorAll("[data-mcat]").forEach(function (el) {
+      el.addEventListener("change", function () {
+        var a = el.getAttribute("data-mcat").split(":");
+        var p = "g" + a[0] + "_b" + a[1] + "_";
+        var mv = document.getElementById(p + "mmove");
+        if (mv) mv.innerHTML = '<option value="">── ムーブを選んで上の欄に挿入 ──</option>' + CAMS[+el.value].moves.map(function (m, mi) {
+          return '<option value="' + mi + '">' + m.label + '</option>';
+        }).join('');
+      });
+    });
+    root.querySelectorAll("[data-mmove]").forEach(function (el) {
+      el.addEventListener("change", function () {
+        if (el.value === "") return;
+        var a = el.getAttribute("data-mmove").split(":");
+        var p = "g" + a[0] + "_b" + a[1] + "_";
+        var cat = document.getElementById(p + "mcat");
+        var m = CAMS[cat ? +cat.value : 0].moves[+el.value];
+        if (!m) return;
+        var cam = document.getElementById(p + "cam"); if (cam) cam.value = m.cam;
+        if (m.fov) { var f = document.getElementById(p + "fov"); if (f) f.value = fovLabel(m.fov); }
       });
     });
     var go = document.getElementById("sd-go");
