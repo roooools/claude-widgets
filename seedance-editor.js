@@ -1,4 +1,5 @@
-/* seedance-editor.js v1.3.0 — Seedance日本語フィールド編集→英語清書エディタ（CDNランタイム）
+/* seedance-editor.js v1.3.1 — Seedance日本語フィールド編集→英語清書エディタ（CDNランタイム）
+   v1.3.1: FOVドロップダウンにmm併記（47°→「47° (40–50mm)」）。
    使い方（チャット側はこれだけ流す）:
      <div id="sd-root">…読み込み中…</div>
      <script>window.SD_DATA = {model,title,common:{refs,look,light,wb,color,audio},gens:[{title,beats:[{t,cut,shot,fov,cam,block,action,fg,bg,perf,line,delivery,props,lock}]}]};</script>
@@ -16,7 +17,17 @@
   };
   if (!model.gens.length) model.gens = [{ title: "Generation 1", beats: [{}] }];
 
-  var FOV = ["180°", "107°", "84°", "63°", "47°", "29°", "18°", "12°", "8°"];
+  var FOV = [["180°", "フィッシュアイ"], ["107°", "14–16mm"], ["84°", "20–24mm"], ["63°", "28–35mm"], ["47°", "40–50mm"], ["29°", "75–85mm"], ["18°", "100–135mm"], ["12°", "180–200mm"], ["8°", "300–400mm"]];
+  function fovLabel(deg) { for (var i = 0; i < FOV.length; i++) { if (FOV[i][0] === deg) return FOV[i][0] + " (" + FOV[i][1] + ")"; } return deg; }
+  function degOf(s) { var m = /(\d+)\s*°/.exec(s || ""); return m ? m[1] + "°" : (s || ""); }
+  function fovSel(id, v) {
+    var d = degOf(v), known = FOV.some(function (f) { return f[0] === d; });
+    var has = (v && !known) ? '<option selected>' + esc(v) + '</option>' : '';
+    return '<select id="' + id + '" style="width:100%">' + has + FOV.map(function (f) {
+      var full = f[0] + " (" + f[1] + ")";
+      return '<option value="' + full + '"' + (f[0] === d ? ' selected' : '') + '>' + full + '</option>';
+    }).join('') + '</select>';
+  }
   var WB = ["3200K", "4000K", "5000K", "5600K", "8500K"];
   var PRESETS = [
     { label: "ヒーロー煽り", fov: "47°", cam: "机の高さからローアングル煽り、腰→胸へゆるプッシュイン（1cm微手持ち・リビール動機）" },
@@ -63,7 +74,7 @@
     h += '<input id="' + p + 'cut" value="' + esc(b.cut) + '" placeholder="カット種別（例：2.5s ハードカット）" style="flex:1;min-width:170px">';
     h += '<button data-del="' + gi + ':' + bi + '" style="' + CHIP + '" aria-label="ビート削除"><i class="ti ti-trash" aria-hidden="true" style="font-size:14px"></i></button>';
     h += '</div>';
-    h += g2(field("ショットサイズ", inp(p + "shot", b.shot)), field("レンズ（FOV）", sel(p + "fov", FOV, b.fov || "47°")));
+    h += g2(field("ショットサイズ", inp(p + "shot", b.shot)), field("レンズ（FOV=mm相当）", fovSel(p + "fov", b.fov || "47°")));
     h += field("カメラの動き", inp(p + "cam", b.cam));
     h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 10px">' + PRESETS.map(function (pr, i) {
       return '<button data-preset="' + gi + ':' + bi + ':' + i + '" style="' + CHIP + '">' + pr.label + '</button>';
@@ -161,7 +172,7 @@
         var a = el.getAttribute("data-preset").split(":");
         var pr = PRESETS[+a[2]], p = "g" + a[0] + "_b" + a[1] + "_";
         var cam = document.getElementById(p + "cam"); if (cam) cam.value = pr.cam;
-        if (pr.fov) { var f = document.getElementById(p + "fov"); if (f) f.value = pr.fov; }
+        if (pr.fov) { var f = document.getElementById(p + "fov"); if (f) f.value = fovLabel(pr.fov); }
       });
     });
     var go = document.getElementById("sd-go");
