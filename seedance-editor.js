@@ -1,4 +1,7 @@
-/* seedance-editor.js v1.4.1 — Seedance日本語フィールド編集→英語清書エディタ（CDNランタイム）
+/* seedance-editor.js v1.4.2 — Seedance日本語フィールド編集→英語清書エディタ（CDNランタイム）
+   v1.4.2: 用語統一「Generation/ビート」→「シーン/カット」。カット見出しは自動ID S{シーン番号}_C{カット番号}（例:S2_C1）。
+   台本のカット番号（例:C4）は任意の小さな補助入力に降格（主見出しと二重で紛らわしかったため）。
+   セリフ欄が空だと壊れて見える問題を解消（プレースホルダ追加、無言時はシノプシスに「（無言）」明示）。
    v1.4.1: ビートに任意の`label`（例:"C4"）を追加。Genタブ・ビートカード見出し・Gen内の内容サマリー行に反映——「Gen2って何のカット?」を無くす。
    v1.4.0: カメラムーブ辞書（7カテゴリ35種・大カテゴリ→ムーブの2段選択→カメラ欄に挿入）。旧6チップは「演出コンボ」カテゴリへ統合。
    v1.3.1: FOVドロップダウンにmm併記（47°→「47° (40–50mm)」）。
@@ -17,7 +20,7 @@
       return { title: g.title || "", beats: (g.beats || []).map(function (b) { return Object.assign({}, b); }) };
     })
   };
-  if (!model.gens.length) model.gens = [{ title: "Generation 1", beats: [{}] }];
+  if (!model.gens.length) model.gens = [{ title: "シーン1", beats: [{}] }];
 
   var FOV = [["180°", "フィッシュアイ"], ["107°", "14–16mm"], ["84°", "20–24mm"], ["63°", "28–35mm"], ["47°", "40–50mm"], ["29°", "75–85mm"], ["18°", "100–135mm"], ["12°", "180–200mm"], ["8°", "300–400mm"]];
   function fovLabel(deg) { for (var i = 0; i < FOV.length; i++) { if (FOV[i][0] === deg) return FOV[i][0] + " (" + FOV[i][1] + ")"; } return deg; }
@@ -85,15 +88,15 @@
   ];
   var BEAT_FIELDS = ["label", "t", "cut", "shot", "fov", "cam", "block", "action", "fg", "bg", "perf", "line", "delivery", "props", "lock"];
   function trunc(s, n) { s = s || ""; return s.length > n ? s.slice(0, n) + "…" : s; }
-  function genCutsSummary(g) {
-    var labels = g.beats.map(function (b) { return b.label; }).filter(Boolean);
-    return labels.length ? labels.join("→") : "";
+  function cutId(gi, bi) { return "S" + (gi + 1) + "_C" + (bi + 1); }
+  function genCutsSummary(g, gi) {
+    return g.beats.map(function (b, bi) { return b.label || cutId(gi, bi); }).join("→");
   }
-  function genSynopsis(g) {
-    return g.beats.map(function (b, i) {
-      var tag = b.label || ("#" + (i + 1));
-      var gist = b.line ? "「" + trunc(b.line, 14) + "」" : trunc(b.action, 16);
-      return tag + (gist ? "：" + gist : "");
+  function genSynopsis(g, gi) {
+    return g.beats.map(function (b, bi) {
+      var tag = b.label || cutId(gi, bi);
+      var gist = b.line ? "「" + trunc(b.line, 14) + "」" : (b.action ? trunc(b.action, 16) : "（無言）");
+      return tag + "：" + gist;
     }).join("　→　");
   }
   var COMMON_FIELDS = ["refs", "look", "light", "wb", "color", "audio"];
@@ -127,11 +130,11 @@
     var p = "g" + gi + "_b" + bi + "_";
     var h = '<div style="' + CARD + '">';
     h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">';
-    h += '<span style="font-weight:500">ビート' + (bi + 1) + '</span>';
-    h += '<input id="' + p + 'label" value="' + esc(b.label) + '" placeholder="カット番号(C4等)" style="width:100px;font-size:12px;color:var(--text-accent)">';
+    h += '<span style="font-weight:500;color:var(--text-accent)">' + cutId(gi, bi) + '</span>';
+    h += '<input id="' + p + 'label" value="' + esc(b.label) + '" placeholder="台本のカット番号（任意・例:C4）" style="width:190px;font-size:12px;color:var(--text-muted)">';
     h += '<input id="' + p + 't" value="' + esc(b.t) + '" placeholder="0.0-2.5s" style="width:110px">';
     h += '<input id="' + p + 'cut" value="' + esc(b.cut) + '" placeholder="カット種別（例：2.5s ハードカット）" style="flex:1;min-width:170px">';
-    h += '<button data-del="' + gi + ':' + bi + '" style="' + CHIP + '" aria-label="ビート削除"><i class="ti ti-trash" aria-hidden="true" style="font-size:14px"></i></button>';
+    h += '<button data-del="' + gi + ':' + bi + '" style="' + CHIP + '" aria-label="カット削除"><i class="ti ti-trash" aria-hidden="true" style="font-size:14px"></i></button>';
     h += '</div>';
     h += g2(field("ショットサイズ", inp(p + "shot", b.shot)), field("レンズ（FOV=mm相当）", fovSel(p + "fov", b.fov || "47°")));
     h += field("カメラの動き", inp(p + "cam", b.cam));
@@ -147,7 +150,7 @@
     h += field("動作", ta(p + "action", b.action));
     h += g2(field("前景", inp(p + "fg", b.fg)), field("背景", inp(p + "bg", b.bg)));
     h += field("表情・芝居", ta(p + "perf", b.perf));
-    h += g2(field("セリフ", inp(p + "line", b.line)), field("言い方", inp(p + "delivery", b.delivery)));
+    h += g2(field("セリフ（無ければ空欄のまま）", inp(p + "line", b.line, "例:「なるほど」")), field("言い方", inp(p + "delivery", b.delivery, "例:静かに、間を置いて")));
     h += g2(field("小道具（空欄=なし）", inp(p + "props", b.props)), field("ロック（固定したいこと）", inp(p + "lock", b.lock)));
     h += '</div>';
     return h;
@@ -161,14 +164,14 @@
     if (model.gens.length > 1) {
       h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px">' + model.gens.map(function (g, i) {
         var on = i === active;
-        var cuts = genCutsSummary(g);
-        var txt = esc(g.title || ("Gen " + (i + 1))) + (cuts ? '<br><span style="font-size:11px;opacity:.75">' + esc(cuts) + '</span>' : '');
+        var cuts = genCutsSummary(g, i);
+        var txt = esc(g.title || ("シーン " + (i + 1))) + (cuts ? '<br><span style="font-size:11px;opacity:.75">' + esc(cuts) + '</span>' : '');
         return '<button data-gen="' + i + '" style="' + BTN + ';padding:6px 14px;font-size:13px;line-height:1.5' + (on ? ';border:2px solid var(--border-accent);color:var(--text-accent)' : '') + '">' + txt + '</button>';
       }).join('') + '</div>';
-      h += '<div style="font-size:12px;color:var(--text-muted);margin:0 0 12px">' + esc(genSynopsis(model.gens[active])) + '</div>';
+      h += '<div style="font-size:12px;color:var(--text-muted);margin:0 0 12px">' + esc(genSynopsis(model.gens[active], active)) + '</div>';
     }
     h += '<div style="' + CARD + '">';
-    h += '<div style="font-weight:500;margin-bottom:12px"><i class="ti ti-users" aria-hidden="true" style="font-size:16px;vertical-align:-2px;margin-right:6px"></i>共通設定（全Gen共有）</div>';
+    h += '<div style="font-weight:500;margin-bottom:12px"><i class="ti ti-users" aria-hidden="true" style="font-size:16px;vertical-align:-2px;margin-right:6px"></i>共通設定（全シーン共有）</div>';
     h += field("参照キャラ・舞台", ta("c_refs", model.common.refs, 2));
     h += g2(field("全体の見た目", inp("c_look", model.common.look)), field("色バランス（60:30:10）", inp("c_color", model.common.color)));
     h += g2(field("光の基調", inp("c_light", model.common.light)), field("WB（色温度）", sel("c_wb", WB, model.common.wb || "5600K")));
@@ -176,14 +179,14 @@
     h += '</div>';
     model.gens.forEach(function (g, gi) {
       h += '<div id="sd-gen' + gi + '" style="display:' + (gi === active ? 'block' : 'none') + '">';
-      h += '<div style="font-weight:500;margin:0 0 10px">' + esc(g.title || ("Generation " + (gi + 1))) + '</div>';
+      h += '<div style="font-weight:500;margin:0 0 10px">' + esc(g.title || ("シーン " + (gi + 1))) + '</div>';
       g.beats.forEach(function (b, bi) { h += beatCard(gi, bi, b); });
-      h += '<button data-add="' + gi + '" style="' + BTN + ';font-size:13px;padding:7px 14px"><i class="ti ti-plus" aria-hidden="true" style="font-size:14px;vertical-align:-2px"></i> ビート追加</button>';
+      h += '<button data-add="' + gi + '" style="' + BTN + ';font-size:13px;padding:7px 14px"><i class="ti ti-plus" aria-hidden="true" style="font-size:14px;vertical-align:-2px"></i> カット追加</button>';
       h += '</div>';
     });
     h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">';
-    h += '<button id="sd-go" style="' + BTN + ';border-color:var(--border-accent);color:var(--text-accent)">このGenを英語プロンプトに変換 ↗</button>';
-    if (model.gens.length > 1) h += '<button id="sd-goall" style="' + BTN + '">全Genまとめて変換 ↗</button>';
+    h += '<button id="sd-go" style="' + BTN + ';border-color:var(--border-accent);color:var(--text-accent)">このシーンを英語プロンプトに変換 ↗</button>';
+    if (model.gens.length > 1) h += '<button id="sd-goall" style="' + BTN + '">全シーンまとめて変換 ↗</button>';
     h += '<button id="sd-copy" style="' + BTN + '">日本語をコピー <i class="ti ti-copy" aria-hidden="true" style="font-size:15px;vertical-align:-2px"></i></button>';
     h += '<span id="sd-msg" style="align-self:center;font-size:13px;color:var(--text-muted)"></span>';
     h += '</div>';
@@ -193,9 +196,9 @@
 
   function assembleGen(gi) {
     var g = model.gens[gi];
-    var s = "\n[" + (g.title || "Generation " + (gi + 1)) + "]\n";
+    var s = "\n[" + (g.title || "シーン" + (gi + 1)) + "]\n";
     g.beats.forEach(function (b, bi) {
-      s += "\n[ビート" + (bi + 1) + (b.label ? "｜" + b.label : "") + "｜" + (b.t || "") + "] " + (b.cut || "") + "\n";
+      s += "\n[" + cutId(gi, bi) + (b.label ? "／台本" + b.label : "") + "｜" + (b.t || "") + "] " + (b.cut || "") + "\n";
       s += "ショット: " + (b.shot || "") + " ／ FOV: " + (b.fov || "") + "\n";
       s += "カメラ: " + (b.cam || "") + "\n";
       s += "配置: " + (b.block || "") + "\n";
@@ -211,7 +214,7 @@
     syncFromDOM();
     var c = model.common;
     var s = "【動画プロンプト英語清書リクエスト｜" + model.model + "｜" + (model.title || "") + "】\n";
-    s += "以下の編集済み日本語フィールドを、Santiago式マルチショットの英語プロンプトに清書して（英日併記・1コードブロック・文字数チェック付き）。清書時はcinematic-grammar経由でPro級アングルへ引き上げ、引き上げた点を1行報告。空欄はビートの意図に沿って自然補完。BGMなし・テロップは編集焼き前提。\n\n";
+    s += "以下の編集済み日本語フィールドを、Santiago式マルチショットの英語プロンプトに清書して（英日併記・1コードブロック・文字数チェック付き）。清書時はcinematic-grammar経由でPro級アングルへ引き上げ、引き上げた点を1行報告。空欄はカットの意図に沿って自然補完。BGMなし・テロップは編集焼き前提。\n\n";
     s += "[共通]\n参照: " + (c.refs || "") + "\n見た目: " + (c.look || "") + "\n光: " + (c.light || "") + " ／ WB: " + (c.wb || "") + "\n色: " + (c.color || "") + "\n音: " + (c.audio || "") + "\n";
     if (which === "all") { model.gens.forEach(function (_, gi) { s += assembleGen(gi); }); }
     else { s += assembleGen(active); }
