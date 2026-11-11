@@ -1,0 +1,398 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>琥珀の一滴</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;600&family=Zen+Kaku+Gothic+New:wght@400;500&display=swap">
+<style>
+/* layout: one film stage on top; title and mode switch beside a slate of shot specs below */
+:root{
+  --bg:#0c0806; --panel:#16100b; --fg:#efe3cf; --muted:#a8957b; --gold:#dcaa4a; --line:#35281b;
+  --display:"Shippori Mincho","Hiragino Mincho ProN","Yu Mincho",serif;
+  --body:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic",sans-serif;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.75}
+.wrap{max-width:1120px;margin:0 auto;padding-block:20px 48px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;gap:28px}
+.stage{position:relative;margin:0;aspect-ratio:16/9;max-width:100%;background:#000;overflow:hidden;border-radius:3px}
+.stage video,.stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:cover}
+.badge{position:absolute;left:12px;bottom:10px;font-size:11px;letter-spacing:.14em;color:var(--fg);opacity:.72;
+  font-variant-numeric:tabular-nums;text-shadow:0 1px 6px #000}
+.info{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:32px 56px;align-items:start}
+.lead{display:flex;flex-direction:column;gap:16px;min-width:0}
+h1{font-family:var(--display);font-weight:500;font-size:clamp(30px,5vw,46px);line-height:1.2;letter-spacing:.08em;margin:0;text-wrap:balance}
+.lead p{margin:0;color:var(--muted);max-width:34em}
+.modes{display:flex;flex-wrap:wrap;gap:8px}
+.modes button{font:inherit;font-size:13px;color:var(--muted);background:transparent;border:1px solid var(--line);
+  padding:8px 16px;border-radius:999px;cursor:pointer}
+.modes button[aria-pressed="true"]{color:var(--bg);background:var(--gold);border-color:var(--gold)}
+.modes button:focus-visible{outline:2px solid var(--gold);outline-offset:3px}
+.slate{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:0;border-top:1px solid var(--line);min-width:0}
+.slate dt,.slate dd{margin:0;padding:10px 0;border-bottom:1px solid var(--line);font-size:13px}
+.slate dt{color:var(--muted);padding-right:24px;white-space:nowrap}
+.slate dd{font-variant-numeric:tabular-nums}
+body.render .wrap{display:none}
+body.render{margin:0;background:#000}
+@media (max-width:720px){.info{grid-template-columns:minmax(0,1fr)}}
+</style>
+
+<main class="wrap">
+  <figure class="stage">
+    <video id="film" src="serum-drop.mp4" poster="serum-drop.jpg" muted loop playsinline autoplay preload="auto"></video>
+    <canvas id="gl" hidden></canvas>
+    <span class="badge" id="badge">FILM · 30 fps</span>
+  </figure>
+  <section class="info">
+    <div class="lead">
+      <h1>琥珀の一滴</h1>
+      <p>美容液の一滴が水面に落ち、柱になって跳ね返るまでの5秒。3Dソフトも撮影素材も使わず、1枚のシェーダーコードだけで光の屈折と液体の動きを計算しています。</p>
+      <div class="modes" role="group" aria-label="表示モード">
+        <button type="button" id="mFilm" aria-pressed="true">フィルム（高品質レンダリング）</button>
+        <button type="button" id="mLive" aria-pressed="false">ライブ（この端末で計算）</button>
+      </div>
+    </div>
+    <dl class="slate">
+      <dt>尺</dt><dd>5.0 秒 · 30 fps · ループ</dd>
+      <dt>液体の形</dt><dd>距離関数のなめらかな合成（落下・クレーター・柱・ちぎれる雫・波紋）</dd>
+      <dt>光</dt><dd>屈折率 1.40 · フレネル反射 · 全反射 · 厚みに応じた色の吸収</dd>
+      <dt>レンズ</dt><dd>被写界深度とモーションブラー（1画素あたり複数サンプル）</dd>
+      <dt>仕上げ</dt><dd>コースティクス · ブルーム · フィルムトーン</dd>
+    </dl>
+  </section>
+</main>
+<canvas id="out" hidden></canvas>
+
+<script>
+const VS = `#version 300 es
+void main(){ vec2 p=vec2((gl_VertexID<<1)&2,gl_VertexID&2); gl_Position=vec4(p*2.-1.,0.,1.); }`;
+
+const FS_SCENE = `#version 300 es
+precision highp float;
+uniform vec2 uRes; uniform float uTime,uSample,uNS,uLens,uShutter;
+out vec4 o;
+const float PI=3.14159265,TAU=6.2831853,T0=1.15,DEPTH=0.38,RZ=3.9,IOR=1.40,FOCUS=3.05;
+const vec3 SIG=vec3(0.10,1.28,5.4);
+float gT,dropY,dropS,dropOn,satY,satOn,jetH,jetR2,jetOn,beadY,beadOn;
+float tau,tauJ,tauB,cratA,cratW,rimA,rimR,dip2,env5;
+vec3 gRd;
+
+float smin(float a,float b,float k){ float h=max(k-abs(a-b),0.)/k; return min(a,b)-h*h*k*.25; }
+
+// expanding ring-wave packet behind a moving front
+float ripple(float r,float tt,float A){
+  if(tt<=0.) return 0.;
+  float x=r-(0.12+0.85*tt);
+  float w=smoothstep(0.10,-0.06,x)*exp(1.9*min(x,0.));
+  return A*smoothstep(0.,0.25,tt)*exp(-0.35*tt)/(1.+0.6*tt)*w*sin(26.*x);
+}
+float height(vec2 q){
+  float r=length(q);
+  float zone=smoothstep(RZ,RZ-0.8,r);
+  if(zone<=0.) return 0.;
+  float h=ripple(r,tau,0.021)+ripple(r,tauJ,0.011)+ripple(r,tauB,0.009);
+  h-=cratA*exp(-r*r/(cratW*cratW));
+  float rr=(r-rimR)/0.075; h+=rimA*exp(-rr*rr);
+  h+=dip2*exp(-r*r/0.012);
+  h*=env5;
+  float ph=TAU*gT/5.;
+  h+=0.0035*sin(1.3*q.x+ph)*sin(1.7*q.y-ph+1.);
+  return h*zone;
+}
+float sdRoundCone(vec2 q,float r1,float r2,float h){
+  float b=(r1-r2)/h,a=sqrt(1.-b*b),k=dot(q,vec2(-b,a));
+  if(k<0.) return length(q)-r1;
+  if(k>a*h) return length(q-vec2(0.,h))-r2;
+  return dot(q,vec2(a,b))-r1;
+}
+// implicit liquid surface: pool heightfield blended with drop, satellite, jet and bead
+float mapN(vec3 p){
+  float d=p.y-height(p.xz);
+  float r=length(p.xz);
+  if(r<0.9&&p.y<2.1){
+    if(dropOn>0.){ vec3 q=vec3(p.x,p.y-dropY,p.z); float sx=inversesqrt(dropS); q.xz*=sx; q.y*=dropS;
+      d=smin(d,(length(q)-0.14)/max(dropS,sx),0.05); }
+    if(satOn>0.) d=smin(d,length(vec3(p.x,p.y-satY,p.z))-0.024,0.03);
+    if(jetOn>0.) d=smin(d,sdRoundCone(vec2(r,p.y+0.30),0.088,jetR2,jetH+0.30)+0.005*sin(24.*(p.y-jetH))*smoothstep(0.04,0.2,p.y),0.19);
+    if(beadOn>0.) d=smin(d,length(vec3(p.x,p.y-beadY,p.z))-0.062,0.07);
+  }
+  return d;
+}
+// ray-direction-aware safe step (exact on the flat far field)
+float map(vec3 p){
+  float r=length(p.xz);
+  if(r>RZ){ float tw=-sign(p.y)*gRd.y; float m=tw>1e-4?abs(p.y)/tw:1e3; return sign(p.y)*min(m,r-RZ+0.05); }
+  float f=mapN(p);
+  float L=r<0.75?2.0:0.8;
+  float d=f/(max(-sign(f)*gRd.y,0.)+L);
+  if(f>0.){ if(r>=0.9) d=min(d,r-0.4); else if(p.y>=2.1) d=min(d,p.y-1.9); }
+  return d;
+}
+vec3 nrm(vec3 p){
+  const vec2 k=vec2(1.,-1.); const float e=0.0012;
+  return normalize(k.xyy*mapN(p+k.xyy*e)+k.yyx*mapN(p+k.yyx*e)+k.yxy*mapN(p+k.yxy*e)+k.xxx*mapN(p+k.xxx*e));
+}
+float march(vec3 ro,vec3 rd,float tmax){
+  gRd=rd; if(rd.y>1e-4) tmax=min(tmax,(2.0-ro.y)/rd.y);
+  if(rd.y>0.&&(ro.y>0.12||(rd.y>0.5&&dot(ro.xz,ro.xz)>0.64))){
+    float dd=dot(rd.xz,rd.xz), tc=dd>1e-6?max(-dot(ro.xz,rd.xz)/dd,0.):0.; vec2 c=ro.xz+rd.xz*tc;
+    if(dot(c,c)>0.16) return -1.;
+  }
+  float t=0.;
+  for(int i=0;i<100;i++){
+    float d=map(ro+rd*t);
+    if(d<0.0005*(1.+t)) return t;
+    t+=d*0.95; if(t>tmax) return -1.;
+  }
+  return t;
+}
+float marchIn(vec3 ro,vec3 rd,out bool fl){
+  gRd=rd; fl=false;
+  float tf=rd.y<-1e-4?(-DEPTH-ro.y)/rd.y:1e4, t=0.;
+  for(int i=0;i<56;i++){
+    float d=-map(ro+rd*t);
+    if(d<0.0005&&i>0) return t;
+    t+=max(d*0.95,0.002);
+    if(t>tf){ fl=true; return tf; }
+    if(t>30.) break;
+  }
+  fl=true; return min(t,tf);
+}
+float box(vec2 p,vec2 c,vec2 h,float s){ vec2 q=abs(p-c)-h; return smoothstep(s,0.,max(q.x,q.y)); }
+// studio: dark umber backdrop with a warm horizon glow, softboxes above, strip lights at the sides
+vec3 env(vec3 d){
+  float az=atan(d.x,-d.z), el=asin(clamp(d.y,-1.,1.));
+  float ga=exp(-az*az/0.22);
+  if(d.y<0.) return vec3(0.30,0.15,0.03)*(0.10+0.4*ga);
+  vec3 c=vec3(0.012,0.008,0.006);
+  c+=vec3(1.05,0.50,0.15)*exp(-el*el/0.010)*(0.05+0.95*ga)*0.26;
+  c+=vec3(0.50,0.19,0.06)*exp(-el*el/0.09)*(0.15+0.85*ga)*0.07;
+  vec2 ae=vec2(az,el);
+  c+=vec3(1.,0.93,0.82)*6.*box(ae,vec2(0.12,0.80),vec2(0.60,0.34),0.07);
+  c+=vec3(1.,0.95,0.88)*6.*box(vec2(PI-abs(az),el),vec2(0.,0.85),vec2(0.55,0.22),0.05);
+  c+=vec3(1.,0.90,0.78)*5.*box(ae,vec2(-1.85,0.45),vec2(0.07,0.45),0.04);
+  c+=vec3(1.,0.82,0.62)*3.5*box(ae,vec2(1.60,0.35),vec2(0.05,0.35),0.04);
+  return c;
+}
+vec3 floorBase(vec2 q){ q.y+=0.3; return vec3(1.,0.94,0.84)*(0.06+1.25*exp(-dot(q,q)/1.3)); }
+vec3 shadeFloor(vec3 p){
+  const float e=0.02; vec2 q=p.xz;
+  float lap=(height(q+vec2(e,0.))+height(q-vec2(e,0.))+height(q+vec2(0.,e))+height(q-vec2(0.,e))-4.*height(q))/(e*e);
+  float c=min(1./(abs(1.-0.11*lap)+0.12),3.2);
+  return floorBase(q)*mix(1.,c,0.65);
+}
+float fres(vec3 rd,vec3 n){ return 0.028+0.972*pow(1.-clamp(dot(-rd,n),0.,1.),5.); }
+vec3 shadeSimple(vec3 p,vec3 n,vec3 rd){
+  vec3 rc=env(reflect(rd,n)), T=refract(rd,n,1./IOR), tc;
+  if(T.y<-0.05){ float l=min((p.y+DEPTH)/(-T.y),1.5); tc=exp(-SIG*l)*floorBase((p+T*l).xz); }
+  else tc=env(T)*exp(-SIG*0.2);
+  return mix(tc,rc,fres(rd,n));
+}
+// follow the refracted ray through the liquid: absorption, internal reflection, exit
+vec3 inside(vec3 ro,vec3 rd){
+  vec3 att=vec3(1.);
+  for(int b=0;b<3;b++){
+    bool fl; float t=marchIn(ro,rd,fl);
+    att*=exp(-SIG*t);
+    vec3 p=ro+rd*t;
+    if(fl) return att*shadeFloor(p);
+    vec3 n=nrm(p), T=refract(rd,-n,IOR);
+    if(dot(T,T)>0.){
+      vec3 q=p+n*0.004; float te=march(q,T,12.);
+      if(te<0.) return att*env(T);
+      q+=T*te; return att*shadeSimple(q,nrm(q),T);
+    }
+    rd=reflect(rd,-n); ro=p-n*0.006;
+  }
+  return att*env(rd)*0.5;
+}
+vec3 trace(vec3 ro,vec3 rd){
+  float t=march(ro,rd,40.);
+  if(t<0.) return env(vec3(rd.x,abs(rd.y),rd.z));
+  vec3 p=ro+rd*t, n=nrm(p), R=reflect(rd,n), rc;
+  vec3 q=p+n*0.004; float tr=march(q,R,12.);
+  if(tr<0.) rc=env(R); else { q+=R*tr; rc=shadeSimple(q,nrm(q),R); }
+  vec3 tc=inside(p-n*0.006,refract(rd,n,1./IOR));
+  return mix(tc,rc,fres(rd,n));
+}
+// choreography of the 5 s loop
+void setup(float t){
+  gT=t; env5=smoothstep(5.,4.1,t);
+  tau=t-T0; float q=-tau;
+  dropY=q>0.?0.14+1.5*q-0.4*q*q:0.14+1.5*q;
+  dropS=(1.+0.07*sin(9.*t)*smoothstep(0.,0.25,q))*(1.+7.*max(tau,0.));
+  dropOn=tau<0.3?1.:0.;
+  satY=0.30+1.3*q; satOn=satY>-0.25?1.:0.;
+  float a=clamp(tau/0.46,0.,1.);
+  cratA=0.17*sin(PI*a)*(1.-0.3*a); cratW=0.13+0.22*a;
+  rimA=0.055*sin(PI*clamp(tau/0.6,0.,1.)); rimR=0.17+0.55*max(tau,0.);
+  float s=tau-0.32;
+  beadY=-0.22+2.25*s-1.155*s*s;
+  float u=(s-0.6)/0.6;
+  jetH=smin(beadY-0.03,0.52*(1.-u*u),0.05);
+  jetR2=mix(0.028,0.070,smoothstep(0.55,1.2,s));
+  jetOn=(s>0.&&jetH>-0.2)?1.:0.;
+  tauJ=s-1.15; tauB=s-1.845;
+  if(tauB>0.) beadY=-1.5*tauB;
+  beadOn=(s>0.&&tauB<0.2)?1.:0.;
+  dip2=0.04*sin(PI*clamp((tauB-0.35)/0.55,0.,1.))-0.05*sin(PI*clamp(tauB/0.4,0.,1.));
+}
+float ign(vec2 p){ return fract(52.9829189*fract(dot(p,vec2(0.06711056,0.00583715)))); }
+void main(){
+  vec2 fc=gl_FragCoord.xy; float i=uSample;
+  float n0=ign(fc),n1=ign(fc+vec2(31.7,11.3)),n2=ign(fc+vec2(7.1,53.9));
+  vec2 aa=uNS>1.5?fract(vec2(0.7548777,0.5698403)*(i+1.)+n0)-0.5:vec2(0.);
+  float t=mod(uTime+((i+n1)/uNS-0.5)*uShutter+5.,5.);
+  setup(t);
+  vec2 uv=(2.*(fc+aa)-uRes)/uRes.y;
+  float ph=TAU*t/5., ang=0.045*sin(ph);
+  vec3 ro=vec3(3.05*sin(ang),0.47+0.015*sin(ph+1.2),3.05*cos(ang)), ta=vec3(0.,0.40,0.);
+  vec3 f=normalize(ta-ro), r=normalize(cross(f,vec3(0.,1.,0.))), u=cross(r,f);
+  vec3 dir=normalize(f*4.1+r*uv.x+u*uv.y);
+  if(uLens>0.){
+    vec2 xi=fract(vec2(0.7548777,0.5698403)*(i+11.)+vec2(n2,n0));
+    float rr=sqrt(xi.x)*uLens, a2=TAU*xi.y;
+    vec3 fp=ro+dir*(FOCUS/dot(dir,f));
+    ro+=(r*cos(a2)+u*sin(a2))*rr; dir=normalize(fp-ro);
+  }
+  o=vec4(min(trace(ro,dir),vec3(40.))/uNS,1.);
+}`;
+
+const FS_BRIGHT = `#version 300 es
+precision highp float; uniform sampler2D uT; uniform vec2 uPx,uSrc; out vec4 o;
+void main(){ vec2 uv=gl_FragCoord.xy*uPx; vec3 c=vec3(0.);
+  c+=texture(uT,uv+uSrc*vec2(-1.,-1.)).rgb; c+=texture(uT,uv+uSrc*vec2(1.,-1.)).rgb;
+  c+=texture(uT,uv+uSrc*vec2(-1.,1.)).rgb; c+=texture(uT,uv+uSrc*vec2(1.,1.)).rgb; c*=0.25;
+  float l=max(c.r,max(c.g,c.b)); o=vec4(c*smoothstep(0.8,2.2,l),1.); }`;
+
+const FS_BLUR = `#version 300 es
+precision highp float; uniform sampler2D uT; uniform vec2 uPx,uDir; out vec4 o;
+void main(){ vec2 uv=gl_FragCoord.xy*uPx; vec3 c=texture(uT,uv).rgb*0.227027;
+  c+=(texture(uT,uv+uDir).rgb+texture(uT,uv-uDir).rgb)*0.1945946;
+  c+=(texture(uT,uv+uDir*2.).rgb+texture(uT,uv-uDir*2.).rgb)*0.1216216;
+  c+=(texture(uT,uv+uDir*3.).rgb+texture(uT,uv-uDir*3.).rgb)*0.0540541;
+  c+=(texture(uT,uv+uDir*4.).rgb+texture(uT,uv-uDir*4.).rgb)*0.0162162; o=vec4(c,1.); }`;
+
+const FS_FINAL = `#version 300 es
+precision highp float; uniform sampler2D uT,uB; uniform vec2 uPx; uniform float uSeed; out vec4 o;
+float h(vec2 p){ return fract(sin(dot(p,vec2(12.9898,78.233))+uSeed)*43758.5453); }
+void main(){ vec2 uv=gl_FragCoord.xy*uPx;
+  vec3 c=texture(uT,uv).rgb+texture(uB,uv).rgb*0.30;
+  vec2 v=(uv-0.5)*vec2(1.,0.85); c*=1.-0.55*smoothstep(0.25,0.85,length(v));
+  c*=0.95; c=clamp((c*(2.51*c+0.03))/(c*(2.43*c+0.59)+0.14),0.,1.);
+  c=pow(c,vec3(1./2.2));
+  c+=(h(gl_FragCoord.xy)-0.5)*0.014;
+  o=vec4(c,1.); }`;
+
+const cv = document.getElementById('gl'), film = document.getElementById('film'), badge = document.getElementById('badge');
+let gl = null, P = {}, T = null, isFloat = false;
+
+function prog(fs){
+  const p = gl.createProgram();
+  for (const [type, src] of [[gl.VERTEX_SHADER, VS], [gl.FRAGMENT_SHADER, fs]]) {
+    const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+    gl.attachShader(p, s);
+  }
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+  const u = {}, n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) { const a = gl.getActiveUniform(p, i); u[a.name] = gl.getUniformLocation(p, a.name); }
+  return { p, u };
+}
+function target(w, h){
+  const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, isFloat ? gl.RGBA16F : gl.RGBA8, w, h, 0, gl.RGBA, isFloat ? gl.HALF_FLOAT : gl.UNSIGNED_BYTE, null);
+  for (const k of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_2D, k, gl.LINEAR);
+  for (const k of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T]) gl.texParameteri(gl.TEXTURE_2D, k, gl.CLAMP_TO_EDGE);
+  const fb = gl.createFramebuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  return { tex, fb, w, h };
+}
+function init(){
+  gl = cv.getContext('webgl2', { antialias: false, alpha: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
+  if (!gl) return false;
+  isFloat = !!gl.getExtension('EXT_color_buffer_float');
+  P = { scene: prog(FS_SCENE), bright: prog(FS_BRIGHT), blur: prog(FS_BLUR), fin: prog(FS_FINAL) };
+  return true;
+}
+function resize(w, h){
+  if (T && T.acc.w === w && T.acc.h === h) return;
+  if (T) for (const t of Object.values(T)) { gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fb); }
+  cv.width = w; cv.height = h;
+  const bw = Math.max(2, w >> 2), bh = Math.max(2, h >> 2);
+  T = { acc: target(w, h), a: target(bw, bh), b: target(bw, bh) };
+}
+function pass(pr, dst, tex, set){
+  gl.bindFramebuffer(gl.FRAMEBUFFER, dst ? dst.fb : null);
+  gl.viewport(0, 0, dst ? dst.w : cv.width, dst ? dst.h : cv.height);
+  gl.useProgram(pr.p);
+  if (tex) { gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, tex); gl.uniform1i(pr.u.uT, 0); }
+  if (pr.u.uPx) gl.uniform2f(pr.u.uPx, 1 / (dst ? dst.w : cv.width), 1 / (dst ? dst.h : cv.height));
+  if (set) set(pr.u);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+function draw(t, ns, lens, shutter){
+  if (!isFloat) ns = 1;
+  const W = cv.width, H = cv.height;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, T.acc.fb); gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+  for (let i = 0; i < ns; i++) pass(P.scene, T.acc, null, u => {
+    gl.uniform2f(u.uRes, W, H); gl.uniform1f(u.uTime, t); gl.uniform1f(u.uSample, i); gl.uniform1f(u.uNS, ns);
+    gl.uniform1f(u.uLens, ns > 1 ? lens : 0); gl.uniform1f(u.uShutter, ns > 1 ? shutter : 0);
+  });
+  gl.disable(gl.BLEND);
+  pass(P.bright, T.a, T.acc.tex, u => gl.uniform2f(u.uSrc, 1 / W, 1 / H));
+  for (const sp of [1.0, 2.3]) {
+    pass(P.blur, T.b, T.a.tex, u => gl.uniform2f(u.uDir, sp / T.a.w, 0));
+    pass(P.blur, T.a, T.b.tex, u => gl.uniform2f(u.uDir, 0, sp / T.a.h));
+  }
+  pass(P.fin, null, T.acc.tex, u => {
+    gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, T.a.tex); gl.uniform1i(u.uB, 1);
+    gl.uniform1f(u.uSeed, (t * 60 | 0) % 97);
+  });
+}
+
+// ---- offline rendering hook (used by render.cjs): ?render=1920x1080
+const rq = new URLSearchParams(location.search).get('render');
+if (rq) {
+  const [w, h] = rq.split('x').map(Number);
+  document.body.classList.add('render'); cv.hidden = false; document.body.appendChild(cv);
+  cv.style.cssText = `width:${w}px;height:${h}px;display:block`;
+  init(); resize(w, h);
+  window.renderAt = (t, ns = 24, lens = 0.035, shutter = 1 / 60, type = 'image/png') => {
+    draw(t, ns, lens, shutter); gl.finish(); return cv.toDataURL(type, 0.92);
+  };
+} else {
+  // ---- page: film by default, live shader on request (or when the film file is missing)
+  let live = false, raf = 0, scale = Math.min(window.devicePixelRatio || 1, 1.5), ema = 16, last = 0;
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const bF = document.getElementById('mFilm'), bL = document.getElementById('mLive');
+  function frame(now){
+    raf = requestAnimationFrame(frame);
+    const box = cv.parentElement.getBoundingClientRect();
+    if (last) { ema += (Math.min(now - last, 200) - ema) * 0.08; if (ema > 30 && scale > 0.35) { scale *= 0.85; ema = 18; } }
+    last = now;
+    resize(Math.max(2, Math.round(box.width * scale)), Math.max(2, Math.round(box.height * scale)));
+    draw(still ? 2.35 : (now / 1000) % 5, 1, 0, 0);
+    badge.textContent = `LIVE · ${cv.width}×${cv.height} · ${Math.round(1000 / ema)} fps`;
+    if (still) cancelAnimationFrame(raf);
+  }
+  function setMode(wantLive){
+    if (wantLive && !gl) { try { if (!init()) throw 0; } catch (e) { badge.textContent = 'この端末ではWebGL2が使えません'; return; } }
+    live = wantLive; cancelAnimationFrame(raf); last = 0;
+    cv.hidden = !live; film.hidden = live;
+    bF.setAttribute('aria-pressed', String(!live)); bL.setAttribute('aria-pressed', String(live));
+    if (live) { film.pause(); raf = requestAnimationFrame(frame); }
+    else { badge.textContent = 'FILM · 30 fps'; if (!still) film.play().catch(() => {}); }
+  }
+  bF.onclick = () => setMode(false); bL.onclick = () => setMode(true);
+  film.addEventListener('error', () => { bF.disabled = true; setMode(true); });
+  if (still) film.removeAttribute('autoplay');
+  document.addEventListener('visibilitychange', () => {
+    if (!live) return; cancelAnimationFrame(raf); last = 0; if (!document.hidden) raf = requestAnimationFrame(frame);
+  });
+}
+</script>
